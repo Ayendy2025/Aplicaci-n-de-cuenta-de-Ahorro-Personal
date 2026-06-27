@@ -242,6 +242,17 @@ form.inline-form{
 .sim-result .head{font-weight:600;font-size:14px;margin-bottom:4px;}
 .sim-result .detail{font-size:13px;color:var(--ink-soft);}
 
+/* compras futuras */
+.wish-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:14px;}
+.wish-head h3{font-size:16px;color:var(--green);}
+.wish-list{display:flex;flex-direction:column;gap:10px;}
+.wish-item{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;}
+.wish-item.done{opacity:0.62;}
+.wish-item .name{font-weight:600;}
+.wish-item .note{font-size:12.5px;color:var(--ink-soft);margin-top:2px;}
+.wish-item .actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end;}
+.wish-price{font-size:16px;font-weight:600;}
+
 /* reportes */
 .bar-row{display:flex;align-items:center;gap:12px;margin-bottom:14px;}
 .bar-row .bar-label{width:110px;font-size:13px;color:var(--ink-soft);flex-shrink:0;}
@@ -266,6 +277,8 @@ form.inline-form{
   .sidebar-foot{display:none;}
   .content{padding:22px 18px;}
   .resumen-top{flex-direction:column;}
+  .wish-item{grid-template-columns:1fr;}
+  .wish-item .actions{justify-content:flex-start;}
 }
 </style>
 </head>
@@ -286,6 +299,7 @@ form.inline-form{
       <button class="tab" data-tab="ahorros">Ahorros</button>
       <button class="tab" data-tab="deudas">Deudas</button>
       <button class="tab" data-tab="simulador">Simulador</button>
+      <button class="tab" data-tab="compras">Compras futuras</button>
       <button class="tab" data-tab="reportes">Reportes</button>
     </nav>
     <div class="sidebar-foot">
@@ -425,6 +439,36 @@ form.inline-form{
       <div class="sim-results" id="simResults"></div>
     </section>
 
+    <!-- COMPRAS FUTURAS -->
+    <section id="compras" class="page">
+      <div class="page-head"><div><h2>Compras futuras</h2><p class="sub">Anota lo que quieres comprar antes de comprometer tu ahorro</p></div></div>
+      <form class="inline-form" id="formCompra">
+        <div class="field">
+          <label for="wishName">Artículo</label>
+          <input id="wishName" type="text" placeholder="Ej. Laptop, tenis, mueble..." required>
+        </div>
+        <div class="field">
+          <label for="wishPrice">Precio estimado (RD$)</label>
+          <input id="wishPrice" type="number" min="1" step="1" required>
+        </div>
+        <div class="field">
+          <label for="wishNote">Nota opcional</label>
+          <input id="wishNote" type="text" placeholder="Tienda, prioridad, modelo...">
+        </div>
+        <button class="btn" type="submit">Agregar a la lista</button>
+      </form>
+      <div class="card">
+        <div class="wish-head">
+          <div>
+            <h3>Lista de deseos</h3>
+            <p class="sub" id="wishSummary" style="margin:4px 0 0;"></p>
+          </div>
+          <button class="btn btn-outline btn-small" id="btnClearDone" type="button">Limpiar comprados</button>
+        </div>
+        <div class="wish-list" id="wishList"></div>
+      </div>
+    </section>
+
     <!-- REPORTES -->
     <section id="reportes" class="page">
       <div class="page-head"><div><h2>Reportes</h2><p class="sub">Métricas con contexto, no solo números sueltos</p></div></div>
@@ -465,6 +509,10 @@ function seedData(){
       {id:'d1', name:'Tarjeta de crédito', total:20000, balance:14500, rate:42, minPayment:1500, due:'2026-07-10',
         payments:[{amount:5500,date:'2026-05-20'}]},
     ],
+    wishlist: [
+      {id:'w1', name:'Laptop para trabajar', price:42000, note:'Comparar precios antes de decidir', status:'pending', date:'2026-06-20'},
+      {id:'w2', name:'Celular nuevo', price:25000, note:'Puede salir del sobre Celular nuevo', status:'pending', date:'2026-06-22'},
+    ],
   };
 }
 
@@ -486,6 +534,12 @@ function normalizeState(data){
       rate: Number(d.rate)||0,
       minPayment: Number(d.minPayment)||0,
       payments: Array.isArray(d.payments) ? d.payments : [],
+    })) : [],
+    wishlist: Array.isArray(clean.wishlist) ? clean.wishlist.map(w=>({
+      ...w,
+      price: Number(w.price)||0,
+      status: w.status || 'pending',
+      date: w.date || today(),
     })) : [],
   };
 }
@@ -509,6 +563,7 @@ const usedIds = [
   ...state.incomes.map(i=>i.id),
   ...state.envelopes.map(e=>e.id),
   ...state.debts.map(d=>d.id),
+  ...state.wishlist.map(w=>w.id),
 ].map(id=>Number(String(id).replace(/\D/g,''))).filter(Boolean);
 idSeq = Math.max(1, ...usedIds) + 1;
 
@@ -516,11 +571,15 @@ idSeq = Math.max(1, ...usedIds) + 1;
 const fmt = n => 'RD$' + Math.round(Number(n)||0).toLocaleString('es-DO');
 const fmtDate = d => { if(!d) return '—'; const dt = new Date(d+'T00:00:00');
   return dt.toLocaleDateString('es-DO',{day:'2-digit',month:'short',year:'numeric'}); };
+const safe = value => String(value ?? '').replace(/[&<>"']/g, ch => ({
+  '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
+}[ch]));
 
 function totalIncome(){ return state.incomes.reduce((s,i)=>s+Number(i.amount),0); }
 function totalIncomeByType(t){ return state.incomes.filter(i=>i.type===t).reduce((s,i)=>s+Number(i.amount),0); }
 function totalSaved(){ return state.envelopes.reduce((s,e)=>s+Number(e.balance),0); }
 function totalDebt(){ return state.debts.reduce((s,d)=>s+Number(d.balance),0); }
+function totalWishlistPending(){ return state.wishlist.filter(w=>w.status!=='done').reduce((s,w)=>s+Number(w.price),0); }
 function savingsRate(){ const inc = totalIncome(); return inc>0 ? (totalSaved()/inc*100) : 0; }
 function debtRatio(){ const inc = totalIncome(); return inc>0 ? (totalDebt()/inc) : 0; }
 
@@ -537,6 +596,7 @@ function renderResumen(){
     <div class="card stat-card income"><div class="label">Ingreso total</div><div class="value mono">${fmt(totalIncome())}</div></div>
     <div class="card stat-card saved"><div class="label">Ahorrado</div><div class="value mono">${fmt(totalSaved())}</div></div>
     <div class="card stat-card debt"><div class="label">Deuda pendiente</div><div class="value mono">${fmt(totalDebt())}</div></div>
+    <div class="card stat-card"><div class="label">Compras futuras</div><div class="value mono" style="color:var(--gold)">${fmt(totalWishlistPending())}</div></div>
   `;
   const status = healthStatus();
   const words = {sano:'SANO', atento:'ATENTO', alerta:'ALERTA'};
@@ -758,6 +818,62 @@ function runSimulation(){
   results.prepend(card);
 }
 
+/* ---------------- render: COMPRAS FUTURAS ---------------- */
+function renderWishlist(){
+  const list = document.getElementById('wishList');
+  const summary = document.getElementById('wishSummary');
+  if(!list || !summary) return;
+
+  const pending = state.wishlist.filter(w=>w.status!=='done');
+  summary.textContent = pending.length
+    ? `${pending.length} pendiente(s) por ${fmt(totalWishlistPending())}`
+    : 'No tienes compras pendientes por ahora.';
+
+  if(state.wishlist.length===0){
+    list.innerHTML = `<div class="empty">Anota aquí cualquier cosa que quieras comprar a futuro con su precio estimado.</div>`;
+    return;
+  }
+
+  const sorted = [...state.wishlist].sort((a,b)=>{
+    if(a.status === b.status) return b.date.localeCompare(a.date);
+    return a.status === 'done' ? 1 : -1;
+  });
+
+  list.innerHTML = sorted.map(item=>`
+    <div class="wish-item ${item.status==='done'?'done':''}" data-id="${item.id}">
+      <div>
+        <div class="name">${safe(item.name)}</div>
+        <div class="note">${safe(item.note || 'Sin nota')} · agregado ${fmtDate(item.date)}</div>
+      </div>
+      <div class="actions">
+        <span class="wish-price mono">${fmt(item.price)}</span>
+        <button class="btn btn-small" onclick="simulateWishlist('${item.id}')">Simular</button>
+        <button class="btn btn-small btn-outline" onclick="toggleWishlist('${item.id}')">${item.status==='done'?'Pendiente':'Comprado'}</button>
+        <button class="del" onclick="deleteWishlist('${item.id}')">eliminar</button>
+      </div>
+    </div>`).join('');
+}
+
+function deleteWishlist(id){
+  state.wishlist = state.wishlist.filter(item=>item.id!==id);
+  renderAll();
+}
+
+function toggleWishlist(id){
+  const item = state.wishlist.find(w=>w.id===id);
+  if(!item) return;
+  item.status = item.status === 'done' ? 'pending' : 'done';
+  renderAll();
+}
+
+function simulateWishlist(id){
+  const item = state.wishlist.find(w=>w.id===id);
+  if(!item) return;
+  activateTab('simulador');
+  document.getElementById('simMonto').value = item.price;
+  runSimulation();
+}
+
 /* ---------------- render: REPORTES ---------------- */
 function renderReportes(){
   const inc = totalIncome(), saved = totalSaved(), debt = totalDebt();
@@ -803,18 +919,25 @@ function renderAll(){
   renderDeudas();
   renderMoveOptions();
   renderSimuladorOptions();
+  renderWishlist();
   renderReportes();
   saveState();
 }
 
 /* ---------------- tabs ---------------- */
-document.getElementById('tabs').addEventListener('click', e=>{
-  const btn = e.target.closest('.tab');
+function activateTab(tabName){
+  const btn = document.querySelector(`.tab[data-tab="${tabName}"]`);
   if(!btn) return;
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   btn.classList.add('active');
   document.getElementById(btn.dataset.tab).classList.add('active');
+}
+
+document.getElementById('tabs').addEventListener('click', e=>{
+  const btn = e.target.closest('.tab');
+  if(!btn) return;
+  activateTab(btn.dataset.tab);
 });
 
 /* ---------------- forms ---------------- */
@@ -890,8 +1013,26 @@ document.getElementById('formDeuda').addEventListener('submit', e=>{
   renderAll();
 });
 
+document.getElementById('formCompra').addEventListener('submit', e=>{
+  e.preventDefault();
+  state.wishlist.push({
+    id: uid(),
+    name: document.getElementById('wishName').value,
+    price: Number(document.getElementById('wishPrice').value),
+    note: document.getElementById('wishNote').value,
+    status: 'pending',
+    date: today(),
+  });
+  e.target.reset();
+  renderAll();
+});
+
 document.getElementById('btnSimular').addEventListener('click', runSimulation);
 document.getElementById('btnLimpiarSim').addEventListener('click', ()=>{ document.getElementById('simResults').innerHTML=''; });
+document.getElementById('btnClearDone').addEventListener('click', ()=>{
+  state.wishlist = state.wishlist.filter(item=>item.status!=='done');
+  renderAll();
+});
 
 document.getElementById('btnReset').addEventListener('click', ()=>{
   state = seedData();
@@ -899,7 +1040,7 @@ document.getElementById('btnReset').addEventListener('click', ()=>{
   renderAll();
 });
 document.getElementById('btnClear').addEventListener('click', ()=>{
-  state = {incomes:[], envelopes:[], debts:[]};
+  state = {incomes:[], envelopes:[], debts:[], wishlist:[]};
   document.getElementById('simResults').innerHTML='';
   renderAll();
 });
